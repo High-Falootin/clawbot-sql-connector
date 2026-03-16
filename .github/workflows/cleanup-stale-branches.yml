@@ -1,0 +1,30 @@
+name: Cleanup Stale Branches
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'  # Every Sunday at 2 AM UTC
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Cleanup stale branches
+        run: |
+          # Delete branches not touched in 30 days (except main/develop)
+          git fetch origin --prune
+          cutoff_date=$(date -d "30 days ago" +%s)
+          
+          for branch in $(git branch -r | grep -v origin/main | grep -v origin/develop | sed 's/origin\///'); do
+            last_commit=$(git log -1 --format=%ct origin/$branch 2>/dev/null || echo 0)
+            if [ "$last_commit" -lt "$cutoff_date" ]; then
+              echo "Deleting stale branch: $branch (last commit: $(date -d @$last_commit))"
+              git push origin --delete $branch || true
+            fi
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
