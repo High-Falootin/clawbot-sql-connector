@@ -1,6 +1,8 @@
 ---
 name: sql-connector
-description: "Generic SQL Server connectivity for OpenClaw agents. Use when: (1) executing parameterized queries against SQL Server, (2) building repository layers that need a sealed, retry-capable SQL transport, (3) any agent that needs reliable MSSQL access without subprocess/sqlcmd. Provides execute/query/scalar APIs via pymssql with automatic retry, connection pooling, and structured error handling."
+version: 2.1.0-alpha
+status: alpha
+description: "Generic SQL Server connectivity for OpenClaw agents. Use when: (1) executing parameterized queries against SQL Server, (2) building repository layers that need a sealed, retry-capable SQL transport, (3) any agent that needs reliable MSSQL access without subprocess/sqlcmd. Provides execute/query/scalar APIs via pymssql with automatic retry, connection pooling, and structured error handling. ALPHA: use at your own risk, API may change."
 ---
 
 # SQL Connector Skill
