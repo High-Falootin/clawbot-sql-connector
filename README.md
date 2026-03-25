@@ -31,21 +31,41 @@ clawhub install sql-connector
 
 ## .env Setup
 
+Backend configuration uses a simple naming pattern. Add these to your `.env`:
+
 ```env
 # Local instance
-SQL_SERVER=10.0.0.110
-SQL_PORT=1433
-SQL_DATABASE=YourDatabase
-SQL_USER=your_user
-SQL_PASSWORD=your_password
+SQL_local_server=10.0.0.110
+SQL_local_port=1433
+SQL_local_database=YourDatabase
+SQL_local_user=your_user
+SQL_local_password=your_password
 
 # Cloud instance (Azure / site4now / etc.)
-SQL_CLOUD_SERVER=yourserver.database.windows.net
-SQL_CLOUD_PORT=1433
-SQL_CLOUD_DATABASE=your_cloud_db
-SQL_CLOUD_USER=your_cloud_user
-SQL_CLOUD_PASSWORD=your_cloud_password
+SQL_cloud_server=yourserver.database.windows.net
+SQL_cloud_port=1433
+SQL_cloud_database=your_cloud_db
+SQL_cloud_user=your_cloud_user
+SQL_cloud_password=your_cloud_password
+
+# Add new backends with the same pattern:
+# SQL_<backend>_server, SQL_<backend>_database, SQL_<backend>_user, SQL_<backend>_password
+SQL_staging_server=staging.database.windows.net
+SQL_staging_port=1433
+SQL_staging_database=staging_db
+SQL_staging_user=staging_user
+SQL_staging_password=staging_password
 ```
+
+Then connect:
+
+```python
+db = get_connector('local')      # Uses SQL_local_* vars
+db = get_connector('cloud')      # Uses SQL_cloud_* vars
+db = get_connector('staging')    # Uses SQL_staging_* vars
+```
+
+**To add a new backend:** Just add 4 env vars to `.env` following the pattern. No code changes needed.
 
 ## Quick Start
 
