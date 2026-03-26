@@ -185,6 +185,17 @@ class SQLConnector(abc.ABC, metaclass=_LockCoreMethods):
                     time.sleep(self.RETRY_DELAY)
         return None
 
+    def ping(self) -> bool:
+        """Verify connectivity. Returns True if the server responds."""
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+            return True
+        except Exception as exc:
+            _log.warning("ping failed: %s", exc)
+            return False
+
     @property
     def backend(self) -> str:
         return self._backend
