@@ -7,6 +7,20 @@ on:
       - develop
 
 jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: TruffleHog Secret Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -34,3 +48,11 @@ jobs:
       
       - name: Build
         run: npm run build --if-present
+      
+      - name: Check for .env files
+        run: |
+          if [ -f .env ]; then
+            echo "ERROR: .env file should not be committed"
+            exit 1
+          fi
+          echo "OK: No .env file tracked"
