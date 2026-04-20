@@ -75,7 +75,16 @@ _BACKENDS: dict[str, dict[str, Any]] = {
 }
 
 
-# ── Metaclass: seal execute/query against subclass override ──────────────────
+# ── Default backend resolution ───────────────────────────────────────────────
+# SQL_DEFAULT_BACKEND env var controls the default.
+# This allows external/ClawHub users (who have no local server) to default to
+# 'cloud', while Oblio's .env sets SQL_DEFAULT_BACKEND=local for local-first.
+#
+# Priority: SQL_DEFAULT_BACKEND env var → 'cloud' (safe for external users)
+# Oblio's .env sets: SQL_DEFAULT_BACKEND=local
+#
+_DEFAULT_BACKEND: str = os.getenv('SQL_DEFAULT_BACKEND', 'cloud')
+
 
 _SEALED = frozenset({'execute', 'query'})
 
@@ -118,14 +127,14 @@ class SQLConnector(abc.ABC, metaclass=_SealCoreMethods):
     MAX_RETRIES:  int   = 3
     RETRY_DELAY:  float = 2.0
 
-    def __init__(self, backend: str = 'local') -> None:
+    def __init__(self, backend: str = _DEFAULT_BACKEND) -> None:
         if backend not in _BACKENDS:
             raise ValueError(f"Unknown backend '{backend}'. Options: {list(_BACKENDS)}")
         self._backend = backend
         self._cfg     = _BACKENDS[backend]
 
     @classmethod
-    def from_env(cls, profile: str = 'local', **kwargs) -> 'SQLConnector':
+    def from_env(cls, profile: str = _DEFAULT_BACKEND, **kwargs) -> 'SQLConnector':
         """Create connector from environment variables (v1.x compat)."""
         if profile not in _BACKENDS:
             raise SQLConnectionError(f"Unknown profile '{profile}'")
@@ -230,7 +239,7 @@ class MSSQLConnector(SQLConnector):
 
 # ── Factory ───────────────────────────────────────────────────────────────────
 
-def get_connector(backend: str = 'local') -> SQLConnector:
+def get_connector(backend: str = _DEFAULT_BACKEND) -> SQLConnector:
     """
     Factory: returns the appropriate SQLConnector for the given backend.
     Add new database types here without changing callers.
