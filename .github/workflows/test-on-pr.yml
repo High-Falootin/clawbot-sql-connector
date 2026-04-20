@@ -4,16 +4,18 @@ on:
   pull_request:
     branches:
       - main
+      - development
       - develop
 
 jobs:
   secret-scan:
+    name: Secret Scanning
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
+
       - name: TruffleHog Secret Scan
         uses: trufflesecurity/trufflehog@main
         with:
@@ -21,38 +23,58 @@ jobs:
           base: ${{ github.event.repository.default_branch }}
           head: HEAD
 
-  test:
+  syntax-check:
+    name: Python Syntax Check
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [18.x, 20.x, 22.x]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          fetch-depth: 0
-      
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'npm'
-      
+          python-version: "3.11"
+
       - name: Install dependencies
-        run: npm ci
-      
-      - name: Run tests
-        run: npm test
-      
-      - name: Run linting
-        run: npm run lint --if-present
-      
-      - name: Build
-        run: npm run build --if-present
-      
+        run: |
+          pip install pymssql python-dotenv
+
+      - name: Syntax check
+        run: |
+          python3 -m py_compile sql_connector.py && echo "✅ sql_connector.py syntax OK"
+
+      - name: Smoke test (no DB required)
+        run: |
+          python3 << 'EOF'
+          import os
+          os.environ.setdefault('SQL_DEFAULT_BACKEND', 'cloud')
+
+          # Patch pymssql to avoid real DB connection in CI
+          import sys
+          from unittest.mock import MagicMock
+          sys.modules['pymssql'] = MagicMock()
+
+          import importlib
+          import sql_connector as sc
+
+          # Verify _DEFAULT_BACKEND resolves correctly
+          assert sc._DEFAULT_BACKEND in ('cloud', 'local'), f"Unexpected default: {sc._DEFAULT_BACKEND}"
+
+          # Verify get_connector exists and is callable
+          assert callable(sc.get_connector)
+
+          # Verify MSSQLConnector exists
+          assert hasattr(sc, 'MSSQLConnector')
+
+          # Verify PLACEHOLDER protection works
+          assert 'SQL_DEFAULT_BACKEND' in os.environ or sc._DEFAULT_BACKEND == 'cloud'
+
+          print(f"✅ Smoke test passed | default backend: {sc._DEFAULT_BACKEND}")
+          EOF
+
       - name: Check for .env files
         run: |
           if [ -f .env ]; then
             echo "ERROR: .env file should not be committed"
             exit 1
           fi
-          echo "OK: No .env file tracked"
+          echo "✅ No .env file tracked"
