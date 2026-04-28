@@ -57,6 +57,7 @@ _log = logging.getLogger(__name__)
 
 # ── Backend configuration ─────────────────────────────────────────────────────
 
+# Built-in backends (always available if env vars are set)
 _BACKENDS: dict[str, dict[str, Any]] = {
     'local': {
         'server':   os.getenv('SQL_SERVER',   os.getenv('SQL_LOCAL_SERVER',   '10.0.0.110')),
@@ -73,6 +74,44 @@ _BACKENDS: dict[str, dict[str, Any]] = {
         'password': os.getenv('SQL_CLOUD_PASSWORD', ''),
     },
 }
+
+
+def _resolve_backend(backend: str) -> dict[str, Any]:
+    """
+    Resolve a backend identifier to its connection config.
+
+    For built-in backends ('local', 'cloud') returns from _BACKENDS.
+    For any other identifier, dynamically resolves from env vars using
+    the SQL_{IDENTIFIER.upper()}_{FIELD} pattern.
+
+    Example: backend='tat' reads:
+        SQL_TAT_SERVER, SQL_TAT_PORT, SQL_TAT_DATABASE,
+        SQL_TAT_USER, SQL_TAT_PASSWORD
+
+    This allows unlimited named backends without code changes:
+        get_connector('tat')   → SQL_TAT_*
+        get_connector('hftc')  → SQL_HFTC_*
+        get_connector('prod')  → SQL_PROD_*
+    """
+    if backend in _BACKENDS:
+        return _BACKENDS[backend]
+
+    # Dynamic resolution from SQL_{IDENTIFIER.upper()}_* env vars
+    prefix = f'SQL_{backend.upper()}_'
+    server = os.getenv(f'{prefix}SERVER', '')
+    if not server:
+        raise ValueError(
+            f"Unknown backend '{backend}' and no {prefix}SERVER env var found. "
+            f"Set {prefix}SERVER, {prefix}DATABASE, {prefix}USER, {prefix}PASSWORD "
+            f"in your .env file, or use a built-in backend: {list(_BACKENDS)}"
+        )
+    return {
+        'server':   server,
+        'port':     int(os.getenv(f'{prefix}PORT', '1433')),
+        'database': os.getenv(f'{prefix}DATABASE', ''),
+        'user':     os.getenv(f'{prefix}USER', ''),
+        'password': os.getenv(f'{prefix}PASSWORD', ''),
+    }
 
 
 # ── Default backend resolution ───────────────────────────────────────────────
@@ -128,16 +167,13 @@ class SQLConnector(abc.ABC, metaclass=_SealCoreMethods):
     RETRY_DELAY:  float = 2.0
 
     def __init__(self, backend: str = _DEFAULT_BACKEND) -> None:
-        if backend not in _BACKENDS:
-            raise ValueError(f"Unknown backend '{backend}'. Options: {list(_BACKENDS)}")
         self._backend = backend
-        self._cfg     = _BACKENDS[backend]
+        self._cfg     = _resolve_backend(backend)
 
     @classmethod
     def from_env(cls, profile: str = _DEFAULT_BACKEND, **kwargs) -> 'SQLConnector':
         """Create connector from environment variables (v1.x compat)."""
-        if profile not in _BACKENDS:
-            raise SQLConnectionError(f"Unknown profile '{profile}'")
+        _resolve_backend(profile)  # validates early
         instance = cls.__new__(cls)
         SQLConnector.__init__(instance, profile)
         return instance
