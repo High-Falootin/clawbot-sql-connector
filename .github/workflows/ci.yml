@@ -1,0 +1,153 @@
+name: CI — Tests and Secret Scan
+
+# BRANCH FLOW POLICY: One-way only
+# development → main → publish (unidirectional)
+# - publish is auto-synced from main after tests pass
+# - Publish must NEVER have its own commits
+# - All feature work on development only
+#
+# DEPENDENCY_PRIORITY:
+# - SQL Connector v2.0 depends on: pymssql (TDS driver), python-dotenv
+# - No ODBC/sqlcmd required (pymssql handles TDS internally)
+# - Tests mock database connections for CI
+
+on:
+  push:
+    branches: [development]
+  pull_request:
+    branches: [main, development]
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Job 1: Secret scan — fail fast on credential exposure
+  # ─────────────────────────────────────────────
+  secret-scan:
+    name: "Secret Scan (public repo safety)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "Scan for credential patterns"
+        run: |
+          echo "Scanning committed files for secrets..."
+          FOUND=0
+
+          # Scan tracked files (not the workflow file itself — patterns live there)
+          FILES=$(git ls-files | grep -v '.github/workflows/')
+
+          for f in $FILES; do
+            [ -f "$f" ] || continue
+
+            # Real credential patterns (not examples/comments)
+            if grep -P 'password\s*=\s*["\x27][A-Za-z0-9!@#$%^&*]{6}' "$f" 2>/dev/null | \
+               grep -qv 'example\|your_\|placeholder\|os\.environ\|os\.getenv\|#\|test\|mock'; then
+              echo "❌ Possible plaintext password in: $f"
+              FOUND=1
+            fi
+
+            if grep -P 'api_token\s*=\s*["\x27][A-Za-z0-9]{10}' "$f" 2>/dev/null | \
+               grep -qv 'example\|your_\|placeholder\|os\.environ\|os\.getenv\|#\|test\|mock'; then
+              echo "❌ Possible plaintext api_token in: $f"
+              FOUND=1
+            fi
+
+            # Real GitHub PAT (36 chars after ghp_)
+            if grep -P '[g][h][p]_[a-zA-Z0-9]{36}' "$f" 2>/dev/null | \
+               grep -qv '#\|test\|example\|your_'; then
+              echo "❌ Possible GitHub PAT in: $f"
+              FOUND=1
+            fi
+          done
+
+          if [ "$FOUND" -eq 1 ]; then
+            echo ""
+            echo "╔══════════════════════════════════════════════════════╗"
+            echo "║  SECRET SCAN FAILED — potential credential detected  ║"
+            echo "╚══════════════════════════════════════════════════════╝"
+            exit 1
+          fi
+          echo "✅ Secret scan passed — no credential patterns found"
+
+  # ─────────────────────────────────────────────
+  # Job 2: Python tests
+  # ─────────────────────────────────────────────
+  test:
+    name: "pytest (Python ${{ matrix.python-version }})"
+    runs-on: ubuntu-latest
+    needs: [secret-scan]
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Set up Python ${{ matrix.python-version }}"
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: "Install dependencies"
+        run: |
+          pip install --upgrade pip
+          pip install pytest pytest-cov pyyaml
+          # SQL Connector requires pymssql (bundles TDS driver)
+          pip install pymssql python-dotenv
+
+      - name: "Run tests with coverage"
+        run: |
+          pytest tests/ -v --tb=short \
+            --cov=src --cov-report=term-missing \
+            --cov-fail-under=45
+        # Coverage baseline: 45% for Phase 1 (integration tests need live DB/mocks)
+        # Target: 70% after comprehensive mock suite
+        env:
+          SQL_CLOUD_SERVER: "mock"
+          SQL_LOCAL_SERVER: "mock"
+
+      - name: "Verify parameterized queries only"
+        run: |
+          echo "Checking for SQL string interpolation (security)..."
+          if grep -rn 'f"SELECT\|f"INSERT\|f"UPDATE\|f"DELETE' \
+            src/ tests/ 2>/dev/null | grep -v '#\|docstring\|test'; then
+            echo "❌ Found SQL f-string interpolation. Use parameterized queries only."
+            exit 1
+          fi
+          echo "✅ No SQL string interpolation found"
+
+      - name: "Verify parameterized placeholders (%s)"
+        run: |
+          echo "Checking for correct SQL placeholder style (pymssql uses %s)..."
+          if grep -rn 'VALUES.*?\|WHERE.*?' src/ 2>/dev/null | \
+             grep -v '#\|test\|mock\|comment'; then
+            echo "❌ Found ? placeholders — pymssql uses %s parameterization"
+            exit 1
+          fi
+          echo "✅ Placeholder style correct (pymssql %s)"
+
+  # ─────────────────────────────────────────────
+  # Job 3: Branch policy enforcement
+  # ─────────────────────────────────────────────
+  branch-policy:
+    name: "Branch Policy (main ← development only)"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    steps:
+      - name: "Enforce development → main only"
+        run: |
+          HEAD="${{ github.head_ref }}"
+          if [[ "$HEAD" != "development" && "$HEAD" != release* ]]; then
+            echo ""
+            echo "╔══════════════════════════════════════════════════════════════╗"
+            echo "║  ❌ BRANCH POLICY VIOLATION                                ║"
+            echo "╠══════════════════════════════════════════════════════════════╣"
+            echo "║  '$HEAD' cannot merge directly to main.                    ║"
+            echo "║  Allowed: development | release/*                           ║"
+            echo "║  Fix: merge your branch to development first.               ║"
+            echo "╚══════════════════════════════════════════════════════════════╝"
+            exit 1
+          fi
+          echo "✅ Branch policy: $HEAD → main is allowed"

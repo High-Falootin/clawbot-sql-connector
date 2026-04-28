@@ -4,161 +4,190 @@
 
 A sealed, retry-capable SQL Server connector for OpenClaw agents. Built on **pymssql** — no `sqlcmd`, no ODBC drivers, no system tools required.
 
+📚 **Documentation**
+- **[GETTING STARTED](./GETTING_STARTED.md)** — Installation, setup, configuration, quick examples (15 min read)
+- **[SKILL REFERENCE](./SKILL_REFERENCE.md)** — Full API, architecture, error handling, performance tips, advanced usage
+
+🚀 **Getting Started (TL;DR)**
+1. `pip install clawbot-sql-connector`
+2. Set credentials in `.env` (cloud or local)
+3. `from sql_connector import get_connector; db = get_connector(); db.ping()`
+4. Use `db.query()`, `db.execute()`, `db.scalar()`
+
 ## Features
 
 - **Multi-backend:** `local` (on-prem) and `cloud` (hosted) in one connector
 - **Env-var driven default:** set `SQL_DEFAULT_BACKEND` in `.env` — no code change needed
 - **Sealed transport:** `execute()` and `query()` sealed via metaclass — subclasses cannot bypass parameterized queries
-- **Retry with backoff:** automatic retry (3x, 2s delay) on transient connection failures
+- **Automatic retry:** retry 3x with exponential backoff (2s) on transient failures
+- **Structured errors:** `SQLConnectionError` (transient) vs `SQLQueryError` (permanent)
 - **Operations:** `execute()` (INSERT/UPDATE/DELETE), `query()` (SELECT → list of dicts), `scalar()` (single value), `ping()` (health check)
-- **Nothing hardcoded:** all credentials from `.env` only
+- **Production-ready:** connection pooling, timeout handling, no hardcoded credentials
+- **Dependencies:** Only `pymssql` + `python-dotenv` (no ODBC, no system packages)
 
 ## Quick Start
+
+For full setup including configuration examples, see **[GETTING STARTED](./GETTING_STARTED.md)**.
 
 ### Installation
 
 ```bash
-# Via ClawHub
+# Via ClawHub (recommended)
 clawhub install sql-connector
 
-# Or pip
-pip install clawbot-sql-connector
+# Or direct pip
+pip install clawbot-sql-connector pymssql python-dotenv
 ```
-
-### Dependencies
-
-```bash
-pip install pymssql python-dotenv
-```
-
-> `pymssql` bundles its own TDS driver. No `sqlcmd`, no ODBC, no system packages.
 
 ### Configure
 
-Copy `.env.example` to `.env` and fill in your values:
+Create `.env` in your workspace with SQL Server credentials:
 
-```bash
-cp .env.example .env
-```
-
-**External / ClawHub users** (cloud SQL Server):
+**Cloud (Azure, site4now, etc.):**
 ```env
 SQL_CLOUD_SERVER=your-server.database.windows.net
 SQL_CLOUD_DATABASE=your_database
-SQL_CLOUD_USER=your_user
+SQL_CLOUD_USER=your_user@server
 SQL_CLOUD_PASSWORD=your_password
-SQL_DEFAULT_BACKEND=cloud      # optional, cloud is default for external users
+SQL_DEFAULT_BACKEND=cloud
 ```
 
-**Local SQL Server** (self-hosted, Oblio setup):
+**Local (on-prem):**
 ```env
 SQL_LOCAL_SERVER=10.0.0.110
-SQL_LOCAL_DATABASE=Oblio_Memories
-SQL_LOCAL_USER=oblio
+SQL_LOCAL_DATABASE=your_database
+SQL_LOCAL_USER=sa
 SQL_LOCAL_PASSWORD=your_password
-SQL_DEFAULT_BACKEND=local      # override default to local
+SQL_DEFAULT_BACKEND=local
 ```
 
-### Use
+### Quick Example
 
 ```python
-from sql_connector import get_connector
+from sql_connector import get_connector, SQLConnectionError
 
-db = get_connector()           # uses SQL_DEFAULT_BACKEND from .env
-# db = get_connector('cloud')  # explicit
-# db = get_connector('local')  # explicit
+db = get_connector()  # uses SQL_DEFAULT_BACKEND from .env
 
-# SELECT → list of dicts
+# SELECT (returns list of dicts)
 rows = db.query(
-    "SELECT id, content FROM memory.Memories WHERE category = %s",
+    "SELECT TOP 5 id, content FROM memory.Memories WHERE category = %s",
     ('facts',)
 )
-for row in rows:
-    print(row['content'])
 
-# INSERT / UPDATE / DELETE → bool
-ok = db.execute(
-    "UPDATE memory.Memories SET importance = %s WHERE id = %s",
-    (8, 42)
+# INSERT/UPDATE/DELETE (returns bool)
+success = db.execute(
+    "INSERT INTO memory.Memories (category, key, content) VALUES (%s, %s, %s)",
+    ('facts', 'obs_001', 'Pattern discovered')
 )
 
-# Single value
+# Single value (COUNT, MAX, etc.)
 count = db.scalar(
-    "SELECT COUNT(*) FROM memory.TaskQueue WHERE status = %s",
-    ('pending',)
+    "SELECT COUNT(*) FROM memory.Memories WHERE category = %s",
+    ('facts',)
 )
 
 # Health check
 if db.ping():
-    print("Connected")
+    print("✅ Database online")
 ```
 
-## Parameterized Queries — Mandatory
+## Design Principles
 
-**Always use `%s` placeholders. Never f-strings or string interpolation.**
+### Parameterized Queries (Always)
 
 ```python
 # ❌ WRONG — SQL injection risk
 db.query(f"SELECT * FROM Memories WHERE category = '{category}'")
 
-# ✅ CORRECT
+# ✅ CORRECT — Always use %s placeholders
 db.query("SELECT * FROM Memories WHERE category = %s", (category,))
 ```
 
-The sealed metaclass prevents `execute()` and `query()` from being overridden in subclasses, so this is enforced by design.
+The sealed metaclass prevents subclass override, enforcing this at the type level.
 
-## Extending
-
-Create a repository subclass for domain logic — don't subclass the transport:
+### Error Handling
 
 ```python
-from sql_connector import MSSQLConnector
+from sql_connector import SQLConnectionError, SQLQueryError
 
-class MemoryRepository(MSSQLConnector):
-    def get_recent_facts(self, limit: int = 10):
-        return self.query(
-            "SELECT TOP %s * FROM memory.Memories "
-            "WHERE category = %s ORDER BY created_at DESC",
-            (limit, 'facts')
+try:
+    rows = db.query("SELECT * FROM memory.Memories")
+except SQLConnectionError as e:
+    # Transient failure (already retried 3x)
+    print(f"Temporarily unavailable: {e}")
+except SQLQueryError as e:
+    # Permanent failure (syntax, permissions, etc.)
+    print(f"Query error: {e}")
+```
+
+## Common Patterns
+
+### Pattern 1: Repository Layer
+
+```python
+from sql_connector import get_connector
+
+class MemoryRepository:
+    def __init__(self, backend='cloud'):
+        self.db = get_connector(backend)
+    
+    def store_fact(self, key, content, importance=7):
+        return self.db.execute(
+            "INSERT INTO memory.Memories (category, key, content, importance) "
+            "VALUES (%s, %s, %s, %s)",
+            ('facts', key, content, importance)
+        )
+    
+    def get_important(self, threshold=7):
+        return self.db.query(
+            "SELECT id, content, importance FROM memory.Memories "
+            "WHERE category = %s AND importance >= %s ORDER BY importance DESC",
+            ('facts', threshold)
         )
 
 repo = MemoryRepository('local')
-facts = repo.get_recent_facts(5)
+repo.store_fact('discovery_001', 'Pattern found', importance=9)
 ```
 
-## Error Handling
+### Pattern 2: Conditional Backend
 
 ```python
-from sql_connector import get_connector, SQLConnectionError, SQLQueryError
+from sql_connector import get_connector, SQLConnectionError
 
-db = get_connector()
-
-try:
-    rows = db.query("SELECT * FROM memory.Memories WHERE id = %s", (99999,))
-except SQLConnectionError as e:
-    print(f"Connection failed (retry-eligible): {e}")
-except SQLQueryError as e:
-    print(f"Query failed (do not retry): {e}")
+def get_db_safe():
+    """Use cloud, fallback to local on error"""
+    try:
+        db = get_connector('cloud')
+        if db.ping():
+            return db
+    except SQLConnectionError:
+        pass
+    return get_connector('local')
 ```
 
-## Default Backend Logic
+## Documentation
 
-| `SQL_DEFAULT_BACKEND` env var | `get_connector()` connects to |
-|-------------------------------|-------------------------------|
-| Not set (external/ClawHub)    | `cloud` |
-| `cloud`                       | `cloud` |
-| `local`                       | `local` (Oblio's .env sets this) |
+| Document | Purpose | Duration |
+|----------|---------|----------|
+| **[GETTING STARTED](./GETTING_STARTED.md)** | Installation, setup, quick examples, troubleshooting | 15 min |
+| **[SKILL REFERENCE](./SKILL_REFERENCE.md)** | Complete API, architecture, error patterns, performance, advanced usage | Reference |
 
-This means:
-- ClawHub users get `cloud` by default (they have no local server)
-- Oblio's `.env` sets `SQL_DEFAULT_BACKEND=local` for local-first operation
-- No code change needed — just `.env` configuration
+**Start here:** [GETTING STARTED](./GETTING_STARTED.md) (first-time users)
 
-## ClawHub
+**Deep dive:** [SKILL REFERENCE](./SKILL_REFERENCE.md) (developers, production systems)
 
-This skill is published to [clawhub.ai](https://clawhub.ai) as `sql-connector`.
+## Publishing & Versions
 
-**Version policy:** Stable releases only. We run this in production and publish when stable for 30+ days.
+**Published to:** [clawhub.ai](https://clayhub.ai/skills/sql-connector) as `sql-connector`
+
+**Current version:** 2.1.0 (stable, production-ready)
+
+**Version policy:** Stable releases only. We run this in production daily and publish when thoroughly tested (30+ days stable).
+
+**Compatibility:**
+- Python 3.9+
+- SQL Server 2019+ (including Azure SQL)
+- pymssql 2.2.0+
 
 ---
 
