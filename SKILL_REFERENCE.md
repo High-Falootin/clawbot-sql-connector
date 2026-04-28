@@ -702,7 +702,7 @@ rows = logged_query("fetch_facts", "SELECT * FROM memory.Memories WHERE category
 
 - **GETTING_STARTED.md** — Installation, setup, quick examples
 - **GitHub:** https://github.com/VeXHarbinger/clawbot-sql-connector
-- **ClawHub:** https://clayhub.ai/skills/sql-connector
+- **ClawHub:** https://clawhub.ai/skills/sql-connector
 - **pymssql docs:** https://pymssql.readthedocs.io/
 
 ---

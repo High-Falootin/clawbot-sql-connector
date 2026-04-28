@@ -484,7 +484,7 @@ for row in tables:
 ## Support & Resources
 
 - **GitHub Issues:** https://github.com/VeXHarbinger/clawbot-sql-connector/issues
-- **ClawHub Registry:** https://clayhub.ai/skills/sql-connector
+- **ClawHub Registry:** https://clawhub.ai/skills/sql-connector
 - **Full API Reference:** [SKILL_REFERENCE.md](./SKILL_REFERENCE.md)
 
 ---

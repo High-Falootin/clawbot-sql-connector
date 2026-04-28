@@ -178,7 +178,7 @@ def get_db_safe():
 
 ## Publishing & Versions
 
-**Published to:** [clawhub.ai](https://clayhub.ai/skills/sql-connector) as `sql-connector`
+**Published to:** [clawhub.ai](https://clawhub.ai/skills/sql-connector) as `sql-connector`
 
 **Current version:** 2.1.0 (stable, production-ready)
 
@@ -188,6 +188,57 @@ def get_db_safe():
 - Python 3.9+
 - SQL Server 2019+ (including Azure SQL)
 - pymssql 2.2.0+
+
+---
+
+## Custom Backend Identifiers
+
+`local` and `cloud` are just examples. The connector supports **any identifier you define** — as long as you set matching `SQL_{IDENTIFIER}_*` env vars.
+
+```env
+# .env — define as many backends as you need
+
+# Your primary on-prem database
+SQL_LOCAL_SERVER=10.0.0.110
+SQL_LOCAL_DATABASE=db_memory
+SQL_LOCAL_USER=sa
+SQL_LOCAL_PASSWORD=yourpassword
+
+# A cloud/Azure database
+SQL_CLOUD_SERVER=yourserver.database.windows.net
+SQL_CLOUD_DATABASE=db_cloud
+SQL_CLOUD_USER=admin@yourserver
+SQL_CLOUD_PASSWORD=yourpassword
+
+# A project-specific database (any name works)
+SQL_TAT_SERVER=10.0.0.110
+SQL_TAT_DATABASE=db_tat_operations
+SQL_TAT_USER=sa
+SQL_TAT_PASSWORD=yourpassword
+
+SQL_HFTC_SERVER=10.0.0.110
+SQL_HFTC_DATABASE=db_hftc_inventory
+SQL_HFTC_USER=sa
+SQL_HFTC_PASSWORD=yourpassword
+
+# Set the default backend (used when no backend arg passed)
+SQL_DEFAULT_BACKEND=local
+```
+
+Then use the identifier as the backend argument:
+
+```python
+from sql_connector import get_connector
+
+db_local = get_connector()        # uses SQL_DEFAULT_BACKEND
+db_tat   = get_connector('tat')   # uses SQL_TAT_* env vars
+db_hftc  = get_connector('hftc')  # uses SQL_HFTC_* env vars
+db_cloud = get_connector('cloud') # uses SQL_CLOUD_* env vars
+```
+
+**Pattern:** `SQL_{IDENTIFIER}_{FIELD}` where `FIELD` is one of `SERVER`, `DATABASE`, `USER`, `PASSWORD`, `PORT` (optional, defaults to 1433).
+
+This means you can connect to as many separate databases as needed without any code changes — just add env vars and pass the identifier.
 
 ---
 
