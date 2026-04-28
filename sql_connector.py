@@ -49,36 +49,54 @@ def _find_env() -> str | None:
         p = p.parent
     return None
 
-_env = _find_env()
-if _env:
-    load_dotenv(_env, override=True)
+# NOTE: .env is loaded lazily inside get_connector() to avoid
+# side-effects at import time (clawhub security scan recommendation).
+# Module-level env vars (os.getenv) are still read at import for _BACKENDS,
+# but load_dotenv is deferred to first connector instantiation.
+_env_loaded = False
+
+def _ensure_env_loaded() -> None:
+    """Load .env once, lazily, on first connector creation."""
+    global _env_loaded
+    if not _env_loaded:
+        _env = _find_env()
+        if _env:
+            load_dotenv(_env, override=True)
+        _env_loaded = True
 
 _log = logging.getLogger(__name__)
 
 # ── Backend configuration ─────────────────────────────────────────────────────
 
 # Built-in backends (always available if env vars are set)
-_BACKENDS: dict[str, dict[str, Any]] = {
-    'local': {
-        'server':   os.getenv('SQL_SERVER',   os.getenv('SQL_LOCAL_SERVER',   '10.0.0.110')),
-        'port':     int(os.getenv('SQL_PORT', os.getenv('SQL_LOCAL_PORT',     '1433'))),
-        'database': os.getenv('SQL_DATABASE', os.getenv('SQL_LOCAL_DATABASE', 'Oblio_Memories')),
-        'user':     os.getenv('SQL_USER',     os.getenv('SQL_LOCAL_USER',     'oblio')),
-        'password': os.getenv('SQL_PASSWORD', os.getenv('SQL_LOCAL_PASSWORD', '')),
-    },
-    'cloud': {
-        'server':   os.getenv('SQL_CLOUD_SERVER',   ''),
-        'port':     int(os.getenv('SQL_CLOUD_PORT', '1433')),
-        'database': os.getenv('SQL_CLOUD_DATABASE', ''),
-        'user':     os.getenv('SQL_CLOUD_USER',     ''),
-        'password': os.getenv('SQL_CLOUD_PASSWORD', ''),
-    },
-}
+# NOTE: No hardcoded default server IPs — all values come from environment only.
+# Internal IPs (10.0.0.110) must be set via SQL_LOCAL_SERVER in .env.
+def _build_backends() -> dict[str, dict[str, Any]]:
+    """Build backend config from environment. Called lazily after .env is loaded."""
+    return {
+        'local': {
+            'server':   os.getenv('SQL_SERVER',   os.getenv('SQL_LOCAL_SERVER',   '')),
+            'port':     int(os.getenv('SQL_PORT', os.getenv('SQL_LOCAL_PORT',     '1433'))),
+            'database': os.getenv('SQL_DATABASE', os.getenv('SQL_LOCAL_DATABASE', '')),
+            'user':     os.getenv('SQL_USER',     os.getenv('SQL_LOCAL_USER',     '')),
+            'password': os.getenv('SQL_PASSWORD', os.getenv('SQL_LOCAL_PASSWORD', '')),
+        },
+        'cloud': {
+            'server':   os.getenv('SQL_CLOUD_SERVER',   ''),
+            'port':     int(os.getenv('SQL_CLOUD_PORT', '1433')),
+            'database': os.getenv('SQL_CLOUD_DATABASE', ''),
+            'user':     os.getenv('SQL_CLOUD_USER',     ''),
+            'password': os.getenv('SQL_CLOUD_PASSWORD', ''),
+        },
+    }
+
+_BACKENDS: dict[str, dict[str, Any]] = {}  # populated lazily on first get_connector()
 
 
 def _resolve_backend(backend: str) -> dict[str, Any]:
     """
     Resolve a backend identifier to its connection config.
+    Loads .env lazily on first call, then builds _BACKENDS from environment.
 
     For built-in backends ('local', 'cloud') returns from _BACKENDS.
     For any other identifier, dynamically resolves from env vars using
@@ -93,6 +111,14 @@ def _resolve_backend(backend: str) -> dict[str, Any]:
         get_connector('hftc')  → SQL_HFTC_*
         get_connector('prod')  → SQL_PROD_*
     """
+    # Load .env lazily (deferred from import time)
+    _ensure_env_loaded()
+
+    # Populate _BACKENDS on first resolve (after .env is loaded)
+    global _BACKENDS
+    if not _BACKENDS:
+        _BACKENDS = _build_backends()
+
     if backend in _BACKENDS:
         return _BACKENDS[backend]
 
