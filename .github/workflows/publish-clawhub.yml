@@ -24,7 +24,7 @@ name: Publish to ClawHub
 # DEPENDENCY_PRIORITY:
 #   - SQL Connector (pymssql) is dependency-heavy: requires TDS driver
 #   - CI tests mock database connections (no live SQL Server needed)
-#   - Users installing via clayhub also get pymssql + python-dotenv
+#   - Users installing via clawhub also get pymssql + python-dotenv
 #
 # NOTE FOR SETUP:
 #   Before running this workflow, you must:
