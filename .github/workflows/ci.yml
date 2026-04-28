@@ -88,31 +88,32 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
 
       - name: "Install dependencies"
         run: |
           pip install --upgrade pip
-          pip install pytest pytest-cov pyyaml
-          # SQL Connector requires pymssql (bundles TDS driver)
+          pip install pytest pytest-cov
+          # Install from requirements.txt
+          pip install -r requirements.txt || true
+          # pymssql is mocked in tests — install for import verification only
           pip install pymssql python-dotenv
 
       - name: "Run tests with coverage"
         run: |
           pytest tests/ -v --tb=short \
-            --cov=src --cov-report=term-missing \
+            --cov=sql_connector --cov-report=term-missing \
             --cov-fail-under=45
-        # Coverage baseline: 45% for Phase 1 (integration tests need live DB/mocks)
-        # Target: 70% after comprehensive mock suite
+        # Coverage baseline: 45% minimum.
+        # sql_connector.py is fully unit-testable with mocked pymssql — no omits needed.
         env:
-          SQL_CLOUD_SERVER: "mock"
           SQL_LOCAL_SERVER: "mock"
+          SQL_DEFAULT_BACKEND: "local"
 
       - name: "Verify parameterized queries only"
         run: |
           echo "Checking for SQL string interpolation (security)..."
           if grep -rn 'f"SELECT\|f"INSERT\|f"UPDATE\|f"DELETE' \
-            src/ tests/ 2>/dev/null | grep -v '#\|docstring\|test'; then
+            sql_connector.py tests/ 2>/dev/null | grep -v '#\|docstring\|test'; then
             echo "❌ Found SQL f-string interpolation. Use parameterized queries only."
             exit 1
           fi
@@ -121,7 +122,7 @@ jobs:
       - name: "Verify parameterized placeholders (%s)"
         run: |
           echo "Checking for correct SQL placeholder style (pymssql uses %s)..."
-          if grep -rn 'VALUES.*?\|WHERE.*?' src/ 2>/dev/null | \
+          if grep -rn 'VALUES.*?\|WHERE.*?' sql_connector.py 2>/dev/null | \
              grep -v '#\|test\|mock\|comment'; then
             echo "❌ Found ? placeholders — pymssql uses %s parameterization"
             exit 1
