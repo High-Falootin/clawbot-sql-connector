@@ -97,27 +97,24 @@ jobs:
       - name: "Install clawhub CLI"
         run: |
           echo "Verifying npx + clawhub CLI access..."
-          npx clawhub@latest --version
+          npx clawhub@latest -V
           echo "✅ clawhub CLI available via npx"
 
       - name: "Validate skill metadata"
         run: |
           echo "Validating openclaw.skill.json..."
           
-          # Check file exists
           if [ ! -f "openclaw.skill.json" ]; then
             echo "❌ openclaw.skill.json not found"
             exit 1
           fi
           
-          # Validate JSON syntax
           if ! python3 -m json.tool openclaw.skill.json > /dev/null 2>&1; then
             echo "❌ openclaw.skill.json is not valid JSON"
             exit 1
           fi
           echo "✅ JSON syntax valid"
           
-          # Check required fields using jq (available on all GitHub Actions runners)
           for field in id name version description license; do
             val=$(jq -r ".${field} // empty" openclaw.skill.json)
             if [ -z "$val" ]; then
@@ -130,45 +127,27 @@ jobs:
           SKILL_VER=$(jq -r '.version' openclaw.skill.json)
           echo "✅ Skill metadata valid: ${SKILL_NAME} v${SKILL_VER}"
 
-      - name: "Authenticate with clawhub.ai"
+      - name: "Publish SQL Connector skill"
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_PUBLISH_TOKEN }}
         run: |
-          echo "Configuring clawhub authentication..."
-          # Export token for clawhub CLI (exact variable name varies by CLI)
-          export CLAWHUB_TOKEN="${{ secrets.CLAWHUB_PUBLISH_TOKEN }}"
-          # Verify token is set (masked in logs)
+          # Verify token is set
           if [ -z "$CLAWHUB_TOKEN" ]; then
             echo "❌ CLAWHUB_PUBLISH_TOKEN secret not configured"
-            echo "   Add via: GitHub Settings → Secrets and variables → Actions → New repository secret"
-            echo "   Name: CLAWHUB_PUBLISH_TOKEN"
-            echo "   Value: [Your token from clawhub.ai account settings]"
+            echo "   Add via: GitHub Settings → Secrets and variables → Actions"
             exit 1
           fi
-          echo "✅ Token configured (masked in logs)"
-
-      - name: "Publish SQL Connector skill"
-        run: |
-          export CLAWHUB_TOKEN="${{ secrets.CLAWHUB_PUBLISH_TOKEN }}"
-          echo "Publishing to clawhub.ai..."
-          # Navigate to skill directory and publish
-          cd . # already at root where skill files are
+          echo "✅ Token present (masked in logs)"
           
-          # Run clawhub publish and capture both exit code and output
-          if npx clawhub@latest publish --token "$CLAWHUB_TOKEN" 2>&1 | tee /tmp/publish.log; then then
-            PUBLISH_EXIT_CODE=$?
-            echo "✅ clawhub publish completed successfully (exit code: $PUBLISH_EXIT_CODE)"
+          echo "Publishing to clawhub.ai..."
+          # clawhub publish <path> uses CLAWHUB_TOKEN env var for auth
+          if npx clawhub@latest publish . 2>&1 | tee /tmp/publish.log; then
+            echo "✅ clawhub publish succeeded"
           else
             PUBLISH_EXIT_CODE=$?
-            echo "❌ clawhub publish failed (exit code: $PUBLISH_EXIT_CODE)"
-            echo "Logs:"
+            echo "❌ clawhub publish failed (exit: $PUBLISH_EXIT_CODE)"
             cat /tmp/publish.log
             exit 1
-          fi
-          
-          # Secondary verification: check output for success indicators
-          if grep -qi "success\|published\|uploaded" /tmp/publish.log; then
-            echo "✅ Output contains success indicators"
-          else
-            echo "⚠️ Output did not contain success indicators (may still have succeeded)"
           fi
 
       - name: "Create GitHub Release"
